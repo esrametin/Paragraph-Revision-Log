@@ -23,6 +23,10 @@
         }
     </style>
     <script type="module">
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, query, where, getDocs, Timestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -32,8 +36,16 @@
 
         // --- GLOBAL FIREBASE VARIABLES ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const firebaseConfig = {
+              apiKey: "AIzaSyAY8YOWBS3-ySS6QwXmZIj7aSkBWHevvj4",
+              authDomain: "paragraph-revision-log.firebaseapp.com",
+              projectId: "paragraph-revision-log",
+              storageBucket: "paragraph-revision-log.firebasestorage.app",
+              messagingSenderId: "919395799866",
+              appId: "1:919395799866:web:a4d328a49d3a69a38bb603",
+              measurementId: "G-H7MPSKHCC3"
+            };
         
         let db;
         let auth;
