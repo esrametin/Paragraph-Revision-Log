@@ -302,7 +302,10 @@
             console.log("DEBUG: Data collected successfully. Attempting to save to Firestore.");
 
             const logId = studentNameValue.replace(/\s/g, '-') + '-' + new Date().getTime(); // Ensure unique log ID
-            const logDocRef = doc(db, `artifacts/${appId}/users/${userId}/revision_logs`, logId);
+            
+            // --- CRITICAL CHANGE: SAVING TO STRUCTURED PATH ---
+            // Saves to: artifacts/{appId}/student_submissions/{logId}
+            const logDocRef = doc(db, `artifacts/${appId}/student_submissions`, logId);
 
             const status = document.getElementById('saveStatus');
             status.textContent = 'Status: Saving...';
