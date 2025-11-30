@@ -66,13 +66,11 @@
         };
         
         // --- SAFE FALLBACK LOGIC ---
-        // Checks for the existence of specialized environment variables on the global window object.
         const isCanvasEnvironment = typeof window !== 'undefined' && typeof window.__app_id !== 'undefined';
 
         const appId = isCanvasEnvironment ? window.__app_id : MANUAL_APP_ID;
         const firebaseConfig = isCanvasEnvironment ? JSON.parse(window.__firebase_config) : MANUAL_FIREBASE_CONFIG;
         
-        // FIXED: Safely check for __initialAuthToken only if it's expected to exist.
         const initialAuthToken = (isCanvasEnvironment && typeof window.__initial_auth_token !== 'undefined') 
             ? window.__initial_auth_token 
             : null;
@@ -84,6 +82,15 @@
         let userId = null;
         let isAuthReady = false;
 
+        // Fallback for crypto.randomUUID (for wider compatibility)
+        function generateRandomId() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+
         if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.projectId) {
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
@@ -93,16 +100,13 @@
             async function authenticate() {
                 try {
                     await setPersistence(auth, browserLocalPersistence);
-                    // Use custom token only if it exists (i.e., in the sandbox environment)
                     if (initialAuthToken) {
                         await signInWithCustomToken(auth, initialAuthToken);
                     } else {
-                        // Use anonymous sign-in for public deployment (GitHub Pages)
                         await signInAnonymously(auth);
                     }
                 } catch (error) {
                     console.error("Firebase Auth Error:", error);
-                    // Fallback to anonymous sign-in or handle failure
                     try {
                         await signInAnonymously(auth);
                     } catch (e) {
@@ -121,7 +125,7 @@
                     statusElement.className = 'text-green-600 font-medium';
                     loadProgress(); // Attempt to load saved data
                 } else {
-                    userId = crypto.randomUUID(); // Fallback if auth completely fails
+                    userId = generateRandomId(); // Fallback ID
                     document.getElementById('userIdDisplay').textContent = `User ID (Fallback): ${userId}`;
                     isAuthReady = true;
                     statusElement.textContent = 'Auth Failed. Using fallback ID. Data WILL NOT save to a specific user account.';
@@ -132,7 +136,7 @@
             authenticate();
         } else {
             console.error("Firebase configuration is missing or incomplete.");
-            userId = crypto.randomUUID();
+            userId = generateRandomId();
             document.addEventListener('DOMContentLoaded', () => {
                 const statusElement = document.getElementById('configStatus');
                 statusElement.textContent = 'Firebase Not Configured. Data saving is disabled. Fill in the config variables above.';
@@ -165,6 +169,7 @@
         }
         
         // --- LLM GENERATION FUNCTION ---
+        // ATTACHED TO WINDOW: window.generateAiFeedback
         window.generateAiFeedback = async function() {
             const draftV1 = document.getElementById('draftV1').value.trim();
             const topic = document.getElementById('topic').value.trim();
@@ -268,6 +273,7 @@
         }
 
         // --- Core Save Function ---
+        // ATTACHED TO WINDOW: window.saveProgress
         window.saveProgress = async function() {
             if (!isAuthReady || !db || !userId) {
                 const status = document.getElementById('saveStatus');
@@ -321,11 +327,13 @@
         ];
         
         // --- Utility Functions for dynamic rows ---
+        // ATTACHED TO WINDOW: window.addRow
         window.addRow = function(preselectedValue) {
             const tableBody = document.getElementById('decisionTableBody');
             tableBody.appendChild(createRowTemplate(preselectedValue));
         }
 
+        // ATTACHED TO WINDOW: window.removeLastRow
         window.removeLastRow = function() {
             const tableBody = document.getElementById('decisionTableBody');
             const rows = tableBody.getElementsByClassName('decision-row');
@@ -399,8 +407,8 @@
             </div>
             <div>
                 <label for="topic" class="block text-sm font-medium text-gray-700">Topic:</label>
-                <input type="text" id="topic" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="e.g., Online vs. Face-to-Face Education">
-            </div>
+                    <input type="text" id="topic" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="e.g., Online vs. Face-to-Face Education">
+                </div>
             <p class="text-sm text-gray-600">
                 **Paragraph Goal:** To write a single, unified paragraph that compares and contrasts [Aspect A] and [Aspect B] regarding the topic.
             </p>
@@ -421,4 +429,62 @@
 
         <!-- 2. AI Feedback Analysis -->
         <section class="mb-8">
-            <h2 class="text-
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">2. AI Feedback Analysis</h2>
+            <h3 class="text-lg font-medium text-gray-700 mb-2">2B. AI Feedback Received</h3>
+            <p class="text-sm text-gray-600 mb-2">*Copy and paste the full feedback generated by the AI here.*</p>
+            <textarea id="aiFeedback" rows="10" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
+            <p id="feedbackStatus" class="mt-2 text-sm text-gray-500">Status: Waiting for draft.</p>
+        </section>
+
+        <!-- 3. Revision Decisions and Rationale -->
+        <section class="mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">3. Revision Decisions and Rationale</h2>
+            <p class="text-sm text-indigo-600 mb-4 font-medium">
+                *Instruction: If the AI provided multiple distinct suggestions for a single aspect (e.g., two different grammatical errors or two separate collocation issues), please duplicate the relevant row to log each decision separately.*
+            </p>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Aspect of Feedback</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">Summary of AI Suggestion (What was the feedback?)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/12">Decision</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">Rationale for Decision (Why Accepted/Rejected?)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="decisionTableBody" class="bg-white divide-y divide-gray-200">
+                        <!-- Default Rows are now dynamically generated by JavaScript for all 7 aspects on DOMContentLoaded -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="mt-4 flex justify-end space-x-3">
+                <button onclick="addRow()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    + Add Decision Row
+                </button>
+                <button onclick="removeLastRow()" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    - Remove Last Row
+                </button>
+            </div>
+        </section>
+
+        <!-- 4. Final Revised Paragraph (V2) -->
+        <section>
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">4. Final Revised Paragraph (V2)</h2>
+            <p class="text-sm text-gray-600 mb-2">*Copy and paste the final, revised version of your paragraph here after incorporating your accepted changes.*</p>
+            <textarea id="draftV2" rows="8" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
+        </section>
+
+        <!-- Save Button and Status -->
+        <div class="mt-8 pt-4 border-t border-gray-200 flex flex-col items-end">
+            <button onclick="saveProgress()" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                Submit & Save Progress
+            </button>
+            <p id="saveStatus" class="mt-2 text-sm text-gray-500">Status: Ready to save.</p>
+        </div>
+        
+    </div>
+
+</body>
+</html>
