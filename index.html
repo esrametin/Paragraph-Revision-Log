@@ -169,8 +169,7 @@
         }
         
         // --- LLM GENERATION FUNCTION ---
-        // ATTACHED TO WINDOW: window.generateAiFeedback
-        window.generateAiFeedback = async function() {
+        function generateAiFeedback() {
             const draftV1 = document.getElementById('draftV1').value.trim();
             const topic = document.getElementById('topic').value.trim();
             const feedbackArea = document.getElementById('aiFeedback');
@@ -227,21 +226,20 @@
                 body: JSON.stringify(payload)
             };
 
-            try {
-                const response = await fetchWithBackoff(apiUrl, options);
-                const result = await response.json();
-                
-                const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Error: Could not retrieve generated text.";
-                
-                feedbackArea.value = generatedText;
-                status.innerHTML = 'Status: ✨ Critique generated successfully. Please review below.';
-                status.className = 'text-green-600 mt-2 font-medium';
-
-            } catch (error) {
-                console.error("Gemini API Error:", error);
-                status.innerHTML = 'Status: API call failed. Check console for details.';
-                status.className = 'text-red-600 mt-2 font-medium';
-            }
+            // Execute the fetch call asynchronously
+            fetchWithBackoff(apiUrl, options)
+                .then(response => response.json())
+                .then(result => {
+                    const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Error: Could not retrieve generated text.";
+                    feedbackArea.value = generatedText;
+                    status.innerHTML = 'Status: ✨ Critique generated successfully. Please review below.';
+                    status.className = 'text-green-600 mt-2 font-medium';
+                })
+                .catch(error => {
+                    console.error("Gemini API Error:", error);
+                    status.innerHTML = 'Status: API call failed. Check console for details.';
+                    status.className = 'text-red-600 mt-2 font-medium';
+                });
         }
 
         // Function to extract all form data
@@ -273,11 +271,10 @@
         }
 
         // --- Core Save Function ---
-        // ATTACHED TO WINDOW: window.saveProgress
-        window.saveProgress = async function() {
+        function saveProgress() {
             if (!isAuthReady || !db || !userId) {
                 const status = document.getElementById('saveStatus');
-                status.textContent = 'Status: Waiting for configuration...';
+                status.textContent = 'Status: Waiting for configuration or authentication to complete...';
                 status.className = 'text-yellow-600 mt-2 font-medium';
                 return;
             }
@@ -298,16 +295,17 @@
             status.textContent = 'Status: Saving...';
             status.className = 'text-blue-600 mt-2 font-medium';
 
-            try {
-                await setDoc(logDocRef, data);
-                status.textContent = 'Status: Successfully Saved! Time: ' + new Date().toLocaleTimeString();
-                status.className = 'text-green-600 mt-2 font-medium';
-                console.log("Document successfully written with ID:", logId);
-            } catch (e) {
-                status.textContent = 'Status: Save Failed! Check console logs and Firebase configuration.';
-                status.className = 'text-red-600 mt-2 font-medium';
-                console.error("Error writing document: ", e);
-            }
+            setDoc(logDocRef, data)
+                .then(() => {
+                    status.textContent = 'Status: Successfully Saved! Time: ' + new Date().toLocaleTimeString();
+                    status.className = 'text-green-600 mt-2 font-medium';
+                    console.log("Document successfully written with ID:", logId);
+                })
+                .catch((e) => {
+                    status.textContent = 'Status: Save Failed! Check console logs and Firebase rules.';
+                    status.className = 'text-red-600 mt-2 font-medium';
+                    console.error("Error writing document: ", e);
+                });
         }
         
         // --- Load Progress Function (Placeholder for future development) ---
@@ -327,14 +325,12 @@
         ];
         
         // --- Utility Functions for dynamic rows ---
-        // ATTACHED TO WINDOW: window.addRow
-        window.addRow = function(preselectedValue) {
+        function addRow(preselectedValue) {
             const tableBody = document.getElementById('decisionTableBody');
             tableBody.appendChild(createRowTemplate(preselectedValue));
         }
 
-        // ATTACHED TO WINDOW: window.removeLastRow
-        window.removeLastRow = function() {
+        function removeLastRow() {
             const tableBody = document.getElementById('decisionTableBody');
             const rows = tableBody.getElementsByClassName('decision-row');
             if (rows.length > aspectOptions.length) { // Allow removing rows only if count exceeds the default seven
@@ -373,16 +369,20 @@
             return row;
         }
 
-        // --- DOM Content Loaded: Initialize 7 default rows ---
+        // --- DOM Content Loaded: Initialize 7 default rows and attach listeners ---
         document.addEventListener('DOMContentLoaded', () => {
             const tableBody = document.getElementById('decisionTableBody');
-            // Clear default rows first if they existed (in case of dynamic loading issues)
+            // 1. Initialize 7 default rows
             tableBody.innerHTML = ''; 
-            
-            // Add one row for each required aspect
             aspectOptions.forEach(aspect => {
                 tableBody.appendChild(createRowTemplate(aspect));
             });
+
+            // 2. Attach Listeners to buttons (using defined function names directly)
+            document.getElementById('generateFeedbackBtn').addEventListener('click', generateAiFeedback);
+            document.getElementById('addRowBtn').addEventListener('click', addRow);
+            document.getElementById('removeRowBtn').addEventListener('click', removeLastRow);
+            document.getElementById('saveProgressBtn').addEventListener('click', saveProgress);
         });
 
     </script>
@@ -421,7 +421,7 @@
             <textarea id="draftV1" rows="8" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
             
             <div class="mt-3 flex justify-end">
-                <button onclick="generateAiFeedback()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <button id="generateFeedbackBtn" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                     ✨ Generate AI Feedback
                 </button>
             </div>
@@ -460,10 +460,10 @@
             </div>
             
             <div class="mt-4 flex justify-end space-x-3">
-                <button onclick="addRow()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <button id="addRowBtn" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                     + Add Decision Row
                 </button>
-                <button onclick="removeLastRow()" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <button id="removeRowBtn" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                     - Remove Last Row
                 </button>
             </div>
@@ -478,7 +478,7 @@
 
         <!-- Save Button and Status -->
         <div class="mt-8 pt-4 border-t border-gray-200 flex flex-col items-end">
-            <button onclick="saveProgress()" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            <button id="saveProgressBtn" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                 Submit & Save Progress
             </button>
             <p id="saveStatus" class="mt-2 text-sm text-gray-500">Status: Ready to save.</p>
