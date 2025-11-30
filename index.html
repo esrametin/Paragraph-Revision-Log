@@ -38,6 +38,9 @@
         }
     </style>
     <script type="module">
+        // DEBUG: Script execution started.
+        console.log("DEBUG: Script execution started.");
+
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, query, where, getDocs, Timestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -92,6 +95,7 @@
 
 
         if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.projectId) {
+            console.log("DEBUG: Firebase config found. Initializing App.");
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
@@ -101,8 +105,10 @@
                 try {
                     await setPersistence(auth, browserLocalPersistence);
                     if (initialAuthToken) {
+                        console.log("DEBUG: Using Custom Auth Token.");
                         await signInWithCustomToken(auth, initialAuthToken);
                     } else {
+                        console.log("DEBUG: Using Anonymous Sign-In.");
                         await signInAnonymously(auth);
                     }
                 } catch (error) {
@@ -118,6 +124,7 @@
             onAuthStateChanged(auth, (user) => {
                 const statusElement = document.getElementById('configStatus');
                 if (user) {
+                    console.log("DEBUG: Auth State Changed. User is logged in:", user.uid);
                     userId = user.uid;
                     document.getElementById('userIdDisplay').textContent = `User ID: ${userId}`;
                     isAuthReady = true;
@@ -125,6 +132,7 @@
                     statusElement.className = 'text-green-600 font-medium';
                     loadProgress(); // Attempt to load saved data
                 } else {
+                    console.log("DEBUG: Auth State Changed. User is NOT logged in or failed.");
                     userId = generateRandomId(); // Fallback ID
                     document.getElementById('userIdDisplay').textContent = `User ID (Fallback): ${userId}`;
                     isAuthReady = true;
@@ -135,7 +143,7 @@
 
             authenticate();
         } else {
-            console.error("Firebase configuration is missing or incomplete.");
+            console.error("DEBUG: Firebase configuration is missing or incomplete.");
             userId = generateRandomId();
             document.addEventListener('DOMContentLoaded', () => {
                 const statusElement = document.getElementById('configStatus');
@@ -147,6 +155,7 @@
         
         // --- LLM API CALL WITH EXPONENTIAL BACKOFF ---
         async function fetchWithBackoff(url, options, retries = 5, delay = 1000) {
+            // No logging here to avoid spamming the console during retries
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, options);
@@ -169,8 +178,8 @@
         }
         
         // --- LLM GENERATION FUNCTION ---
-        // ATTACHED TO WINDOW
         window.generateAiFeedback = function() {
+            console.log("DEBUG: Function 'generateAiFeedback' clicked.");
             const draftV1 = document.getElementById('draftV1').value.trim();
             const topic = document.getElementById('topic').value.trim();
             const feedbackArea = document.getElementById('aiFeedback');
@@ -272,12 +281,13 @@
         }
 
         // --- Core Save Function ---
-        // ATTACHED TO WINDOW
         window.saveProgress = function() {
+            console.log("DEBUG: Function 'saveProgress' clicked.");
             if (!isAuthReady || !db || !userId) {
                 const status = document.getElementById('saveStatus');
                 status.textContent = 'Status: Waiting for configuration or authentication to complete...';
                 status.className = 'text-yellow-600 mt-2 font-medium';
+                console.error("ERROR: Cannot save. isAuthReady:", isAuthReady, " db:", db, " userId:", userId);
                 return;
             }
 
@@ -289,6 +299,7 @@
                 status.className = 'text-red-600 mt-2 font-medium';
                 return;
             }
+            console.log("DEBUG: Data collected successfully. Attempting to save to Firestore.");
 
             const logId = studentNameValue.replace(/\s/g, '-') + '-' + new Date().getTime(); // Ensure unique log ID
             const logDocRef = doc(db, `artifacts/${appId}/users/${userId}/revision_logs`, logId);
@@ -301,12 +312,12 @@
                 .then(() => {
                     status.textContent = 'Status: Successfully Saved! Time: ' + new Date().toLocaleTimeString();
                     status.className = 'text-green-600 mt-2 font-medium';
-                    console.log("Document successfully written with ID:", logId);
+                    console.log("SUCCESS: Document successfully written with ID:", logId);
                 })
                 .catch((e) => {
                     status.textContent = 'Status: Save Failed! Check console logs and Firebase rules.';
                     status.className = 'text-red-600 mt-2 font-medium';
-                    console.error("Error writing document: ", e);
+                    console.error("FATAL ERROR: Error writing document: ", e);
                 });
         }
         
@@ -327,18 +338,21 @@
         ];
         
         // --- Utility Functions for dynamic rows ---
-        // ATTACHED TO WINDOW
         window.addRow = function(preselectedValue) {
+            console.log("DEBUG: Function 'addRow' clicked. Adding new row.");
             const tableBody = document.getElementById('decisionTableBody');
             tableBody.appendChild(createRowTemplate(preselectedValue));
         }
 
-        // ATTACHED TO WINDOW
         window.removeLastRow = function() {
+            console.log("DEBUG: Function 'removeLastRow' clicked.");
             const tableBody = document.getElementById('decisionTableBody');
             const rows = tableBody.getElementsByClassName('decision-row');
             if (rows.length > aspectOptions.length) { // Allow removing rows only if count exceeds the default seven
+                console.log("DEBUG: Removing last row.");
                 tableBody.removeChild(rows[rows.length - 1]);
+            } else {
+                console.log("DEBUG: Cannot remove row. Minimum aspect count reached.");
             }
         }
 
@@ -375,12 +389,14 @@
 
         // --- DOM Content Loaded: Initialize 7 default rows and attach listeners ---
         document.addEventListener('DOMContentLoaded', () => {
+            console.log("DEBUG: DOMContentLoaded fired. Initializing table structure.");
             const tableBody = document.getElementById('decisionTableBody');
             // 1. Initialize 7 default rows
             tableBody.innerHTML = ''; 
             aspectOptions.forEach(aspect => {
                 tableBody.appendChild(createRowTemplate(aspect));
             });
+             console.log("DEBUG: Table rows initialized successfully.");
         });
 
     </script>
