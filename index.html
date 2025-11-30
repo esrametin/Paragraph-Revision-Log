@@ -21,38 +21,70 @@
             border-radius: 0.375rem;
             resize: vertical;
         }
+        .loading-ring {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #ffffff;
+            animation: spin 1s ease-in-out infinite;
+            -webkit-animation: spin 1s ease-in-out infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
     <script type="module">
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, collection, query, where, getDocs, Timestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Set log level for debugging
         setLogLevel('Debug');
-
-        // --- GLOBAL FIREBASE VARIABLES ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        const firebaseConfig = {
-              apiKey: "AIzaSyAY8YOWBS3-ySS6QwXmZIj7aSkBWHevvj4",
-              authDomain: "paragraph-revision-log.firebaseapp.com",
-              projectId: "paragraph-revision-log",
-              storageBucket: "paragraph-revision-log.firebasestorage.app",
-              messagingSenderId: "919395799866",
-              appId: "1:919395799866:web:a4d328a49d3a69a38bb603",
-              measurementId: "G-H7MPSKHCC3"
-            };
         
+        // =========================================================================
+        // --- CRITICAL CONFIGURATION SECTION (FIXED) ---
+        // =========================================================================
+
+        // 1. GEMINI API Key (REQUIRED for the 'Generate AI Feedback' button)
+        const GEMINI_API_KEY = ""; // <-- INSERT YOUR GEMINI API KEY HERE
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+        
+        // 2. FIREBASE CONFIGURATION (Provided by the user)
+        const MANUAL_APP_ID = "paragraph-revision-log"; // Project ID
+        const MANUAL_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyAY8YOWBS3-ySS6QwXmZIj7aSkBWHevvj4",
+            authDomain: "paragraph-revision-log.firebaseapp.com",
+            projectId: "paragraph-revision-log",
+            storageBucket: "paragraph-revision-log.firebasestorage.app",
+            messagingSenderId: "919395799866",
+            appId: "1:919395799866:web:a4d328a49d3a69a38bb603",
+            measurementId: "G-H7MPSKHCC3"
+        };
+        
+        // --- SAFE FALLBACK LOGIC ---
+        // Checks for the existence of specialized environment variables on the global window object.
+        const isCanvasEnvironment = typeof window !== 'undefined' && typeof window.__app_id !== 'undefined';
+
+        const appId = isCanvasEnvironment ? window.__app_id : MANUAL_APP_ID;
+        const firebaseConfig = isCanvasEnvironment ? JSON.parse(window.__firebase_config) : MANUAL_FIREBASE_CONFIG;
+        
+        // FIXED: Safely check for __initialAuthToken only if it's expected to exist.
+        const initialAuthToken = (isCanvasEnvironment && typeof window.__initial_auth_token !== 'undefined') 
+            ? window.__initial_auth_token 
+            : null;
+        
+        // =========================================================================
+
         let db;
         let auth;
         let userId = null;
         let isAuthReady = false;
 
-        if (Object.keys(firebaseConfig).length > 0) {
+        if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.projectId) {
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
@@ -61,9 +93,11 @@ const analytics = getAnalytics(app);
             async function authenticate() {
                 try {
                     await setPersistence(auth, browserLocalPersistence);
+                    // Use custom token only if it exists (i.e., in the sandbox environment)
                     if (initialAuthToken) {
                         await signInWithCustomToken(auth, initialAuthToken);
                     } else {
+                        // Use anonymous sign-in for public deployment (GitHub Pages)
                         await signInAnonymously(auth);
                     }
                 } catch (error) {
@@ -78,29 +112,133 @@ const analytics = getAnalytics(app);
             }
 
             onAuthStateChanged(auth, (user) => {
+                const statusElement = document.getElementById('configStatus');
                 if (user) {
                     userId = user.uid;
                     document.getElementById('userIdDisplay').textContent = `User ID: ${userId}`;
                     isAuthReady = true;
-                    console.log("Authentication complete. User ID:", userId);
+                    statusElement.textContent = 'Firebase Connected. Saving to project: ' + (firebaseConfig.projectId || appId);
+                    statusElement.className = 'text-green-600 font-medium';
                     loadProgress(); // Attempt to load saved data
                 } else {
                     userId = crypto.randomUUID(); // Fallback if auth completely fails
                     document.getElementById('userIdDisplay').textContent = `User ID (Fallback): ${userId}`;
                     isAuthReady = true;
-                    console.log("Authentication complete. Using fallback ID:", userId);
+                    statusElement.textContent = 'Auth Failed. Using fallback ID. Data WILL NOT save to a specific user account.';
+                    statusElement.className = 'text-red-600 font-medium';
                 }
             });
 
             authenticate();
         } else {
-            console.error("Firebase configuration is missing.");
+            console.error("Firebase configuration is missing or incomplete.");
             userId = crypto.randomUUID();
             document.addEventListener('DOMContentLoaded', () => {
-                document.getElementById('userIdDisplay').textContent = `Firebase Not Configured. Fallback ID: ${userId}`;
+                const statusElement = document.getElementById('configStatus');
+                statusElement.textContent = 'Firebase Not Configured. Data saving is disabled. Fill in the config variables above.';
+                statusElement.className = 'text-red-600 font-bold';
+                document.getElementById('userIdDisplay').textContent = `Fallback ID: ${userId}`;
             });
         }
         
+        // --- LLM API CALL WITH EXPONENTIAL BACKOFF ---
+        async function fetchWithBackoff(url, options, retries = 5, delay = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status === 429 && i < retries - 1) {
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2; // Exponential backoff
+                        continue;
+                    }
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        throw new Error(`HTTP error! status: ${response.status} - ${errorBody.error.message}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (i === retries - 1) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+            }
+        }
+        
+        // --- LLM GENERATION FUNCTION ---
+        window.generateAiFeedback = async function() {
+            const draftV1 = document.getElementById('draftV1').value.trim();
+            const topic = document.getElementById('topic').value.trim();
+            const feedbackArea = document.getElementById('aiFeedback');
+            const status = document.getElementById('feedbackStatus');
+
+            if (!draftV1 || !topic) {
+                status.textContent = 'Please enter your Draft V1 and Topic before generating feedback.';
+                status.className = 'text-red-600 mt-2 font-medium';
+                return;
+            }
+            if (GEMINI_API_KEY.length === 0) {
+                status.textContent = 'ERROR: Gemini API Key is missing in the configuration. Please insert your key to use this feature.';
+                status.className = 'text-red-600 mt-2 font-medium';
+                return;
+            }
+
+            status.innerHTML = '<span class="loading-ring"></span> Status: ✨ Generating academic critique... This may take a moment.';
+            status.className = 'text-indigo-600 mt-2 font-medium flex items-center';
+            feedbackArea.value = '';
+
+            const systemInstruction = `
+                You are a highly detailed Academic Writing Tutor specializing in corpus linguistics and rhetorical analysis.
+                Your response MUST be structured, clear, and actionable.
+                For each of the seven criteria, provide specific critique, referencing the student's text directly, and offering concrete, expert suggestions.
+                The criteria are: 1. Relevance/Task, 2. Organization/Structure, 3. Development/Detail, 4. Unity/Coherence, 5. Syntactic Variety, 6. Lexical Range/Idiomaticity, 7. Grammar/Mechanics.
+                
+                Format your output clearly, using a header for each criterion followed by the analysis, example, and suggestion.
+            `;
+
+            const userQuery = `
+                Analyze the following student paragraph written on the topic: "${topic}".
+                
+                The paragraph's goal is to be a single, unified compare and contrast paragraph.
+
+                Critique the text based on the 7 criteria below. For each criterion, provide detailed feedback, point out one direct example from the student's paragraph, and suggest one concrete change.
+
+                Student Paragraph:
+                ---
+                ${draftV1}
+                ---
+            `;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                config: {
+                    temperature: 0.2
+                }
+            };
+
+            const options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            };
+
+            try {
+                const response = await fetchWithBackoff(apiUrl, options);
+                const result = await response.json();
+                
+                const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Error: Could not retrieve generated text.";
+                
+                feedbackArea.value = generatedText;
+                status.innerHTML = 'Status: ✨ Critique generated successfully. Please review below.';
+                status.className = 'text-green-600 mt-2 font-medium';
+
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                status.innerHTML = 'Status: API call failed. Check console for details.';
+                status.className = 'text-red-600 mt-2 font-medium';
+            }
+        }
+
         // Function to extract all form data
         function collectFormData() {
             const decisionRows = Array.from(document.querySelectorAll('#decisionTableBody .decision-row'));
@@ -119,7 +257,6 @@ const analytics = getAnalytics(app);
 
             return {
                 studentName: document.getElementById('studentName').value,
-                // Removed: date
                 topic: document.getElementById('topic').value,
                 draftV1: document.getElementById('draftV1').value,
                 aiFeedback: document.getElementById('aiFeedback').value,
@@ -134,14 +271,21 @@ const analytics = getAnalytics(app);
         window.saveProgress = async function() {
             if (!isAuthReady || !db || !userId) {
                 const status = document.getElementById('saveStatus');
-                status.textContent = 'Status: Waiting for authentication... Please try again shortly.';
+                status.textContent = 'Status: Waiting for configuration...';
                 status.className = 'text-yellow-600 mt-2 font-medium';
                 return;
             }
 
             const data = collectFormData();
             const studentNameValue = document.getElementById('studentName').value.trim();
-            const logId = studentNameValue.replace(/\s/g, '-') || crypto.randomUUID(); // Use student name or fallback to UUID if blank
+            if (!studentNameValue) {
+                const status = document.getElementById('saveStatus');
+                status.textContent = 'ERROR: Student Name is required to save the log.';
+                status.className = 'text-red-600 mt-2 font-medium';
+                return;
+            }
+
+            const logId = studentNameValue.replace(/\s/g, '-') + '-' + new Date().getTime(); // Ensure unique log ID
             const logDocRef = doc(db, `artifacts/${appId}/users/${userId}/revision_logs`, logId);
 
             const status = document.getElementById('saveStatus');
@@ -154,7 +298,7 @@ const analytics = getAnalytics(app);
                 status.className = 'text-green-600 mt-2 font-medium';
                 console.log("Document successfully written with ID:", logId);
             } catch (e) {
-                status.textContent = 'Status: Save Failed! See console for error.';
+                status.textContent = 'Status: Save Failed! Check console logs and Firebase configuration.';
                 status.className = 'text-red-600 mt-2 font-medium';
                 console.error("Error writing document: ", e);
             }
@@ -242,6 +386,7 @@ const analytics = getAnalytics(app);
             <h1 class="text-3xl font-bold text-gray-800">Academic Paragraph Revision Log</h1>
             <p class="text-gray-500 mt-2">Data-Driven Writing Cycle: Documenting AI Feedback and Critical Revision</p>
             <p id="userIdDisplay" class="text-xs text-gray-400 mt-1"></p>
+            <p id="configStatus" class="text-sm text-yellow-600 mt-1 font-bold">Status: Awaiting Firebase initialization and configuration...</p>
         </header>
 
         <!-- Metadata Section -->
@@ -266,65 +411,14 @@ const analytics = getAnalytics(app);
             <h2 class="text-xl font-semibold text-gray-800 mb-2">1. Initial Paragraph Draft (V1)</h2>
             <p class="text-sm text-gray-600 mb-2">Write your final draft here into this textbox, without any AI help.</p>
             <textarea id="draftV1" rows="8" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
+            
+            <div class="mt-3 flex justify-end">
+                <button onclick="generateAiFeedback()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    ✨ Generate AI Feedback
+                </button>
+            </div>
         </section>
 
         <!-- 2. AI Feedback Analysis -->
         <section class="mb-8">
-            <h2 class="text-xl font-semibold text-gray-800 mb-2">2. AI Feedback Analysis</h2>
-            <h3 class="text-lg font-medium text-gray-700 mb-2">2B. AI Feedback Received</h3>
-            <p class="text-sm text-gray-600 mb-2">*Copy and paste the full feedback generated by the AI here.*</p>
-            <textarea id="aiFeedback" rows="10" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
-        </section>
-
-        <!-- 3. Revision Decisions and Rationale -->
-        <section class="mb-8">
-            <h2 class="text-xl font-semibold text-gray-800 mb-2">3. Revision Decisions and Rationale</h2>
-            <p class="text-sm text-indigo-600 mb-4 font-medium">
-                *Instruction: If the AI provided multiple distinct suggestions for a single aspect (e.g., two different grammatical errors or two separate collocation issues), please duplicate the relevant row to log each decision separately.*
-            </p>
-
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Aspect of Feedback</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">Summary of AI Suggestion (What was the feedback?)</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/12">Decision</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">Rationale for Decision (Why Accepted/Rejected?)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="decisionTableBody" class="bg-white divide-y divide-gray-200">
-                        <!-- Default Rows are now dynamically generated by JavaScript for all 7 aspects on DOMContentLoaded -->
-                    </tbody>
-                </table>
-            </div>
-            
-            <div class="mt-4 flex justify-end space-x-3">
-                <button onclick="addRow()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    + Add Decision Row
-                </button>
-                <button onclick="removeLastRow()" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                    - Remove Last Row
-                </button>
-            </div>
-        </section>
-
-        <!-- 4. Final Revised Paragraph (V2) -->
-        <section>
-            <h2 class="text-xl font-semibold text-gray-800 mb-2">4. Final Revised Paragraph (V2)</h2>
-            <p class="text-sm text-gray-600 mb-2">*Copy and paste the final, revised version of your paragraph here after incorporating your accepted changes.*</p>
-            <textarea id="draftV2" rows="8" class="block w-full border border-gray-300 rounded-md shadow-sm p-3 resize-y"></textarea>
-        </section>
-
-        <!-- Save Button and Status -->
-        <div class="mt-8 pt-4 border-t border-gray-200 flex flex-col items-end">
-            <button onclick="saveProgress()" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                Submit & Save Progress
-            </button>
-            <p id="saveStatus" class="mt-2 text-sm text-gray-500">Status: Ready to save.</p>
-        </div>
-        
-    </div>
-
-</body>
-</html>
+            <h2 class="text-
